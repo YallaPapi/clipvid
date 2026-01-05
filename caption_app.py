@@ -8,6 +8,7 @@ from tkinter import filedialog, scrolledtext, simpledialog
 from pathlib import Path
 from datetime import datetime
 import os
+import random
 from dotenv import load_dotenv
 
 # Load .env file from same directory as script
@@ -16,17 +17,55 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 MODEL = "claude-sonnet-4-5-20250929"
 
-REWRITE_PROMPT = """Rewrite this caption. Rules:
-- Keep the same meaning/concept
-- Keep the same tone and energy
-- Keep the EXACT same structure (same number of lines, same line breaks)
-- If a line has quotes, your rewritten line should have quotes in the same spot
-- If a line is short, keep it short. If it's long, keep it long.
-- Make it sound natural and viral-worthy
-- Just give me the rewritten text, nothing else
+# Load caption rules and examples
+def load_caption_rules():
+    """Load the caption style rules"""
+    rules_file = Path(__file__).parent / "100captionsrules.txt"
+    if rules_file.exists():
+        with open(rules_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    return ""
 
-Original:
-{text}"""
+def load_caption_examples():
+    """Load example captions"""
+    examples_file = Path(__file__).parent / "100captions.txt"
+    if examples_file.exists():
+        with open(examples_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+            lines = [line.strip() for line in content.split('\n') if line.strip()]
+            # Return 20 random examples for context
+            return random.sample(lines, min(20, len(lines)))
+    return []
+
+CAPTION_RULES = load_caption_rules()
+CAPTION_EXAMPLES = load_caption_examples()
+
+POST_CAPTION_PROMPT = """You are writing a POST CAPTION for a viral TikTok/Instagram video.
+
+This is NOT the on-screen text. This is the caption that appears BELOW the video in the post.
+
+## Style Rules (from successful viral captions)
+{rules}
+
+## Example Captions (for reference style)
+{examples}
+
+## The Video
+The video shows the following on-screen text:
+{onscreen_text}
+
+## Your Task
+1. Consider what's happening in the video (girl being cute/flirty on camera)
+2. Auto-select the best caption category that fits
+3. Write a POST CAPTION that complements the video
+
+Requirements:
+- ALL LOWERCASE - every character must be lowercase
+- Keep it short (1-3 lines max)
+- Use casual chat grammar: "u", "ur", "idc", "rn", "lowkey"
+- Confident, playful, slightly shameless tone
+- Should complement the on-screen text, not repeat it
+- Output ONLY the caption, nothing else"""
 
 
 class CaptionApp:
@@ -180,17 +219,26 @@ class CaptionApp:
                         }],
                     )
                     original_text = message.content[0].text.strip()
-                    self.root.after(0, lambda f=img_file.name: self.log_msg(f"[{f}] Rewriting..."))
+                    self.root.after(0, lambda f=img_file.name: self.log_msg(f"[{f}] Generating post caption..."))
+
+                    # Build the prompt with rules and examples
+                    examples_text = "\n".join(CAPTION_EXAMPLES)
+                    prompt = POST_CAPTION_PROMPT.format(
+                        rules=CAPTION_RULES,
+                        examples=examples_text,
+                        onscreen_text=original_text
+                    )
 
                     rewrite_msg = client.messages.create(
                         model=MODEL,
                         max_tokens=1024,
                         messages=[{
                             "role": "user",
-                            "content": REWRITE_PROMPT.format(text=original_text)
+                            "content": prompt
                         }],
                     )
-                    rewritten_text = rewrite_msg.content[0].text.strip()
+                    # Ensure lowercase output
+                    rewritten_text = rewrite_msg.content[0].text.strip().lower()
                     self.root.after(0, lambda f=img_file.name: self.log_msg(f"[{f}] Done"))
 
                     results.append((img_file.stem, original_text, rewritten_text))
@@ -206,12 +254,12 @@ class CaptionApp:
             with open(output_txt, 'w', encoding='utf-8') as f:
                 for filename, original, rewritten in results:
                     f.write(f"{filename}\n")
-                    f.write(f"ORIGINAL:\n{original}\n")
-                    f.write(f"REWRITTEN:\n{rewritten}\n\n")
+                    f.write(f"ON-SCREEN TEXT:\n{original}\n")
+                    f.write(f"POST CAPTION:\n{rewritten}\n\n")
 
             with open(output_csv, 'w', encoding='utf-8', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["filename", "original", "rewritten"])
+                writer.writerow(["filename", "onscreen_text", "post_caption"])
                 for filename, original, rewritten in results:
                     writer.writerow([filename, original, rewritten])
 
